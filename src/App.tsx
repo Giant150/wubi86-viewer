@@ -181,7 +181,7 @@ export default function App() {
         </nav>
       </header>
 
-      <main className="flex-1 pb-16">
+      <main className="flex-1 pb-8">
         {loc.page === 'search' && (
           <>
             <div className={`transition-all ${q ? 'pt-2' : 'pt-[10vh]'}`}>
@@ -269,42 +269,32 @@ export default function App() {
         {loc.page === 'review' && roots && <ReviewPage roots={roots} onSearch={search} />}
       </main>
 
-      <footer className="border-t border-black/5 py-6 text-center text-xs leading-6 text-ink-2/70 dark:border-white/10 dark:text-white/35">
-        {meta && (
-          <p>
-            收录 {meta.chars.toLocaleString()} 个汉字、{meta.words.toLocaleString()} 个词组；字根拆解{' '}
-            {meta.decomposed.toLocaleString()} 字，田字格笔画 {meta.strokes.toLocaleString()} 字。
-          </p>
-        )}
-        <p>
-          编码与候选顺序来自 Windows 微软五笔词库；字根拆解参考{' '}
-          <a className="underline" href="https://github.com/sdcb/search-wubi" target="_blank" rel="noreferrer">
-            search-wubi
-          </a>
-          ；笔画矢量来自{' '}
-          <a className="underline" href="https://github.com/skishore/makemeahanzi" target="_blank" rel="noreferrer">
-            Make Me a Hanzi
-          </a>{' '}
-          (Arphic Public License)。查询记录仅保存在本机浏览器。
-        </p>
-        <p className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-          <a
-            className="inline-flex items-center gap-1.5 transition hover:text-ink dark:hover:text-white/80"
-            href={REPO_URL}
-            target="_blank"
-            rel="noreferrer"
+      <footer className="border-t border-black/5 py-4 text-center text-xs text-ink-2/70 dark:border-white/10 dark:text-white/35">
+        <p className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1">
+          <span
+            title={
+              meta
+                ? `收录 ${meta.chars.toLocaleString()} 字、${meta.words.toLocaleString()} 词；字根拆解 ${meta.decomposed.toLocaleString()} 字，笔画 ${meta.strokes.toLocaleString()} 字`
+                : undefined
+            }
           >
+            数据：微软五笔 ·{' '}
+            <a className={FOOT_LINK} href="https://github.com/sdcb/search-wubi" target="_blank" rel="noreferrer">
+              search-wubi
+            </a>{' '}
+            ·{' '}
+            <a className={FOOT_LINK} href="https://github.com/skishore/makemeahanzi" target="_blank" rel="noreferrer">
+              Make Me a Hanzi
+            </a>
+          </span>
+          <span aria-hidden>|</span>
+          <a className={`inline-flex items-center gap-1 ${FOOT_LINK}`} href={REPO_URL} target="_blank" rel="noreferrer">
             <GitHubIcon className="h-3.5 w-3.5" />
-            sdcb/wubi86-viewer
+            GitHub
           </a>
           <span aria-hidden>·</span>
-          <a
-            className="transition hover:text-ink dark:hover:text-white/80"
-            href={`${REPO_URL}/blob/main/LICENSE`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            源代码以 AGPL-3.0 许可开源
+          <a className={FOOT_LINK} href={`${REPO_URL}/blob/main/LICENSE`} target="_blank" rel="noreferrer">
+            AGPL-3.0
           </a>
         </p>
       </footer>
@@ -323,6 +313,7 @@ export default function App() {
 }
 
 const REPO_URL = 'https://github.com/sdcb/wubi86-viewer'
+const FOOT_LINK = 'transition hover:text-ink dark:hover:text-white/80'
 
 function GitHubIcon({ className = '' }: { className?: string }) {
   return (
