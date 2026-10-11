@@ -4,6 +4,10 @@
 
 线上地址：<https://wubi.sdcb.ai>
 
+[![查询「胜」：田字格字根分色高亮与取码讲解](docs/screenshot-char.png)](https://wubi.sdcb.ai/?q=胜)
+
+[![查询「今天吃什么」：推荐打法与优化打法](docs/screenshot-sentence.png)](https://wubi.sdcb.ai/?q=今天吃什么)
+
 ## 功能
 
 - 汉字 / 词语 → 微软五笔的全部编码（含简码），候选顺序与系统一致
