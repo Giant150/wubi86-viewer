@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getChar, getMeta, getRoots, getWordCodes, type CharRecord, type Meta, type RootInfo } from './lib/data'
+import { getChar, getMeta, getRoots, getWordCodes, type CharRecord, type DictCode, type Meta, type RootInfo } from './lib/data'
 import { history } from './lib/history'
 import { CharCard } from './components/CharCard'
 import { WordCard } from './components/WordCard'
+import { MAX_PLAN_CHARS } from './lib/plan'
 import { CodeResults } from './components/CodeResults'
 import { HistoryPanel } from './components/HistoryPanel'
 import { RootsPage } from './components/RootsPage'
@@ -23,7 +24,7 @@ const historyKey = (q: string) => (isCode(q) ? q.toLowerCase() : hanOnly(q))
 interface SearchResult {
   q: string
   kind: 'code' | 'han' | 'none'
-  word?: { text: string; codes: string[]; recs: (CharRecord | null)[] }
+  word?: { text: string; codes: DictCode[]; recs: (CharRecord | null)[] }
   chars: { ch: string; rec: CharRecord | null }[]
 }
 
@@ -95,12 +96,13 @@ export default function App() {
       if (isCode(q)) return { q, kind: 'code', chars: [] }
       const han = hanOnly(q)
       if (!han) return { q, kind: 'none', chars: [] }
-      const list = [...han]
-      const uniq = [...new Set(list)].slice(0, 16)
-      const recs = new Map(await Promise.all(uniq.map(async (ch) => [ch, await getChar(ch)] as const)))
+      const list = [...han].slice(0, MAX_PLAN_CHARS)
+      const all = [...new Set(list)]
+      const uniq = all.slice(0, 16)
+      const recs = new Map(await Promise.all(all.map(async (ch) => [ch, await getChar(ch)] as const)))
       let word: SearchResult['word']
-      if (list.length > 1 && list.length <= 12) {
-        word = { text: han, codes: await getWordCodes(han), recs: list.map((c) => recs.get(c) ?? null) }
+      if (list.length > 1) {
+        word = { text: list.join(''), codes: await getWordCodes(list.join('')), recs: list.map((c) => recs.get(c) ?? null) }
       }
       return { q, kind: 'han', word, chars: uniq.map((ch) => ({ ch, rec: recs.get(ch) ?? null })) }
     })().then((r) => alive && setResult(r))

@@ -37,7 +37,7 @@ export function ReviewPage({ roots, onSearch }: { roots: Record<string, RootInfo
             glyphs: parts.map((p) => ({ id: p.glyph, slot: p.color, letter: p.letter })),
           }
         }
-        return { q, codes: await getWordCodes(q), glyphs: [] }
+        return { q, codes: (await getWordCodes(q)).map(([c, rank]) => (rank > 1 ? c + rank : c)), glyphs: [] }
       }),
     ).then((cs) => {
       if (!alive) return

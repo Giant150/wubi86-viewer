@@ -1,6 +1,6 @@
 export interface CharRecord {
-  /** Microsoft Wubi codes: [code, candidate rank] */
-  codes: [string, number][]
+  /** Microsoft Wubi codes */
+  codes: DictCode[]
   py?: string
   ids?: string
   rad?: string
@@ -24,6 +24,9 @@ export interface CharRecord {
   q?: 'source' | 'exact' | 'approx'
 }
 
+/** [code, 1-based candidate rank, number of candidates under the code] */
+export type DictCode = [string, number, number]
+
 export interface RootInfo {
   k: string
   p: string
@@ -42,13 +45,16 @@ export interface Meta {
   strokes: number
 }
 
+// Bump when the data format changes so cached shards from older builds are not reused.
+const DATA_VERSION = 2
 const cache = new Map<string, Promise<unknown>>()
 
 function fetchJson<T>(path: string): Promise<T> {
   let p = cache.get(path)
   if (!p) {
-    p = fetch(`/data/${path}`).then((r) => {
-      if (r.status === 404) return {}
+    p = fetch(`/data/${path}?v=${DATA_VERSION}`).then((r) => {
+      // Missing shards fall back to index.html (SPA routing) on both Vite and Cloudflare Pages.
+      if (r.status === 404 || !r.headers.get('content-type')?.includes('json')) return {}
       if (!r.ok) throw new Error(`${r.status} ${path}`)
       return r.json()
     })
@@ -65,8 +71,8 @@ export async function getChar(ch: string): Promise<CharRecord | null> {
   return shard[ch] ?? null
 }
 
-export async function getWordCodes(word: string): Promise<string[]> {
-  const shard = await fetchJson<Record<string, string[]>>(`w/${(cp(word) >> 6).toString(16)}.json`)
+export async function getWordCodes(word: string): Promise<DictCode[]> {
+  const shard = await fetchJson<Record<string, DictCode[]>>(`w/${(cp(word) >> 6).toString(16)}.json`)
   return shard[word] ?? []
 }
 

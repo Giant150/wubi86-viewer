@@ -1,9 +1,11 @@
-import type { CharRecord } from '../lib/data'
+import { useEffect, useState } from 'react'
+import type { CharRecord, DictCode } from '../lib/data'
 import { wordRule } from '../lib/explain'
+import { commitKey, MAX_PLAN_CHARS, planTyping, type PlanResult, type Segment, type TypingPlan } from '../lib/plan'
 
 interface Props {
   word: string
-  codes: string[]
+  codes: DictCode[]
   recs: (CharRecord | null)[]
   onSearch: (q: string) => void
 }
@@ -14,39 +16,179 @@ export function charFullCode(rec: CharRecord | null): string {
   return [...rec.codes].sort((a, b) => b[0].length - a[0].length)[0]?.[0] ?? rec.full ?? ''
 }
 
+function CommitCap({ commit, size = 'md' }: { commit: string; size?: 'sm' | 'md' }) {
+  if (!commit) return null
+  const cls =
+    size === 'sm'
+      ? 'h-5 min-w-5 px-1 text-[10px] border-b-2'
+      : 'h-7 min-w-7 px-1.5 text-xs'
+  return (
+    <span
+      className={`keycap ${cls} ml-1 border-cinnabar/30 bg-cinnabar/10 text-cinnabar normal-case dark:text-[#ff8a7a]`}
+      title={commit === ' ' ? '按空格上屏' : `按 ${commit} 选第 ${commit} 个候选`}
+    >
+      {commit === ' ' ? (
+        <svg viewBox="0 0 16 8" className={size === 'sm' ? 'h-2 w-3.5' : 'h-2.5 w-4'} fill="none" stroke="currentColor" strokeWidth="1.8" aria-label="空格">
+          <path d="M1.5 1v5.5h13V1" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : (
+        commit
+      )}
+    </span>
+  )
+}
+
+const commitLabel = (s: Pick<Segment, 'commit' | 'rank'>) =>
+  s.commit === '' ? '四码唯一 · 自动上屏' : s.commit === ' ' ? '空格上屏' : `第 ${s.rank} 候选 · 按 ${s.rank}`
+
+function SegmentChip({ seg, onSearch }: { seg: Segment; onSearch: (q: string) => void }) {
+  if (seg.missing) {
+    return (
+      <div className="flex flex-col items-center gap-1 rounded-2xl border border-dashed border-black/15 px-3 py-2.5 opacity-70 dark:border-white/15">
+        <span className="font-kai text-2xl">{seg.text}</span>
+        <span className="text-[11px] text-ink-2 dark:text-white/50">词库无此字</span>
+      </div>
+    )
+  }
+  return (
+    <button
+      onClick={() => onSearch(seg.text)}
+      title={`查看「${seg.text}」`}
+      className="flex flex-col items-center gap-1.5 rounded-2xl border border-cinnabar/25 bg-white/80 px-3 py-2.5 transition hover:-translate-y-0.5 hover:border-cinnabar/50 dark:bg-white/5"
+    >
+      <span className="font-kai text-2xl leading-none">{seg.text}</span>
+      <span className="flex items-center">
+        <span className="font-mono text-base font-semibold tracking-[0.15em] text-cinnabar dark:text-[#ff8a7a]">
+          {seg.code}
+        </span>
+        <CommitCap commit={seg.commit} size="sm" />
+      </span>
+      <span className="text-[10px] text-ink-2/80 dark:text-white/40">{commitLabel(seg)}</span>
+    </button>
+  )
+}
+
+function PlanInline({ plan }: { plan: TypingPlan }) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
+      {plan.segs.map((s, i) =>
+        s.missing ? (
+          <span key={i} className="opacity-60">〔{s.text}〕</span>
+        ) : (
+          <span key={i} className="inline-flex items-center font-mono tracking-wider" title={`${s.text} · ${commitLabel(s)}`}>
+            {s.code}
+            <CommitCap commit={s.commit} size="sm" />
+          </span>
+        ),
+      )}
+    </span>
+  )
+}
+
+function PlanPanel({ word, res, inDict, onSearch }: { word: string; res: PlanResult; inDict: boolean; onSearch: (q: string) => void }) {
+  const [best, ...alts] = res.plans
+  if (!best) return null
+  const wholeIsBest = inDict && best.segs.length === 1 && best.segs[0].text === word
+  const saved = res.perChar - best.keys
+  return (
+    <section className="mt-6 rounded-2xl border border-black/5 bg-black/[0.025] p-4 sm:p-5 dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className="font-kai text-xl">推荐打法</h3>
+        <span className="text-sm text-ink-2 dark:text-white/55">
+          共 <b className="font-mono text-ink dark:text-white">{best.keys}</b> 键
+          {saved > 0 && (
+            <>
+              ，比逐字输入（{res.perChar} 键）省 <b className="text-emerald-600 dark:text-emerald-400">{saved}</b> 键
+            </>
+          )}
+        </span>
+        {wholeIsBest && <span className="text-xs text-ink-2/80 dark:text-white/45">整词编码就是最省键的打法</span>}
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-stretch gap-2">
+        {best.segs.map((s, i) => (
+          <SegmentChip key={i} seg={s} onSearch={onSearch} />
+        ))}
+      </div>
+
+      {alts.length > 0 && (
+        <div className="mt-4 space-y-1 text-sm">
+          <div className="text-xs text-ink-2/80 dark:text-white/45">其他打法</div>
+          {alts.map((p, i) => (
+            <div key={i} className="flex flex-wrap items-baseline gap-x-3">
+              <PlanInline plan={p} />
+              <span className="text-xs text-ink-2/80 dark:text-white/45">
+                {p.segs.map((s) => s.text).join(' / ')} · {p.keys} 键
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p className="mt-3 text-[11px] leading-5 text-ink-2/70 dark:text-white/35">
+        计键规则：编码位数 + 上屏键；四码且只有一个候选时自动上屏，其余按空格（第 1 候选）或数字键选重；需要翻页的候选不计入。
+        {res.truncated && ` 仅计算前 ${MAX_PLAN_CHARS} 个字。`}
+      </p>
+    </section>
+  )
+}
+
 export function WordCard({ word, codes, recs, onSearch }: Props) {
   const chars = [...word]
   const { rule, picks } = wordRule(chars)
   const fulls = recs.map(charFullCode)
   const derived = picks.map(([ci, idx]) => idx.map((i) => fulls[ci]?.[i] ?? '?').join('')).join('')
   const takeMap = new Map(picks.map(([ci, idx]) => [ci, idx]))
+  const [plan, setPlan] = useState<{ word: string; res: PlanResult } | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    planTyping([...word]).then((res) => alive && setPlan({ word, res }))
+    return () => {
+      alive = false
+    }
+  }, [word])
+
+  const inDict = codes.length > 0
 
   return (
     <article className="card pop-in p-5 sm:p-7">
       <div className="flex flex-wrap items-baseline gap-x-5 gap-y-2">
         <h2 className="font-kai text-5xl tracking-wide">{word}</h2>
-        <span className="text-sm text-ink-2 dark:text-white/50">词组 · {chars.length} 字</span>
+        <span className="text-sm text-ink-2 dark:text-white/50">
+          {inDict ? '词组' : '句子 / 未收录词组'} · {chars.length} 字
+        </span>
       </div>
 
-      <div className="mt-4 flex flex-wrap gap-2">
-        {codes.length ? (
-          codes.map((c) => (
-            <button
-              key={c}
-              onClick={() => onSearch(c)}
-              className="rounded-xl border border-cinnabar/30 bg-cinnabar/5 px-3 py-1.5 font-mono text-xl font-semibold tracking-[0.2em] text-cinnabar transition hover:bg-cinnabar/10 dark:text-[#ff8a7a]"
-            >
-              {c}
-            </button>
-          ))
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        {inDict ? (
+          codes.map(([c, rank, n]) => {
+            const commit = commitKey(c, rank, n)
+            return (
+              <button
+                key={c}
+                onClick={() => onSearch(c)}
+                title={commit === null ? `第 ${rank} 候选，需要翻页` : commitLabel({ commit, rank })}
+                className="flex items-center rounded-xl border border-cinnabar/30 bg-cinnabar/5 px-3 py-1.5 transition hover:bg-cinnabar/10"
+              >
+                <span className="font-mono text-xl font-semibold tracking-[0.2em] text-cinnabar dark:text-[#ff8a7a]">{c}</span>
+                {commit === null ? (
+                  <span className="ml-1 text-xs text-ink-2 dark:text-white/50">第 {rank} 候选</span>
+                ) : (
+                  <CommitCap commit={commit} />
+                )}
+              </button>
+            )
+          })
         ) : (
-          <span className="text-ink-2 dark:text-white/60">
-            微软五笔词库未收录该词组，按规则应为 <b className="font-mono tracking-widest">{derived}</b>
-          </span>
+          <span className="text-ink-2 dark:text-white/60">微软五笔词库未收录整句，不能用一个编码直接打出，请按下方推荐打法分段输入。</span>
         )}
       </div>
 
-      <p className="mt-5 text-[15px] leading-7">{rule}</p>
+      {plan?.word === word && <PlanPanel word={word} res={plan.res} inDict={inDict} onSearch={onSearch} />}
+
+      <p className="mt-6 text-[15px] leading-7">
+        {inDict ? rule : `造词规则（仅供参考）：${rule}`}
+      </p>
       <div className="mt-3 flex flex-wrap items-stretch gap-3">
         {chars.map((ch, ci) => {
           const take = takeMap.get(ci)
@@ -80,7 +222,12 @@ export function WordCard({ word, codes, recs, onSearch }: Props) {
           )
         })}
       </div>
-      {codes.length > 0 && !codes.includes(derived) && !derived.includes('?') && (
+      {!inDict && !derived.includes('?') && (
+        <p className="mt-3 text-xs text-ink-2/80 dark:text-white/45">
+          若在输入法中手动造词，该词编码将为 <span className="font-mono tracking-widest">{derived}</span>；系统词库中不能直接用它打出。
+        </p>
+      )}
+      {inDict && !codes.some(([c]) => c === derived) && !derived.includes('?') && (
         <p className="mt-3 text-xs text-ink-2/80 dark:text-white/45">
           注：按单字全码推得 {derived}，与词库编码不同，可能因单字存在其他取码方式，以词库为准。
         </p>

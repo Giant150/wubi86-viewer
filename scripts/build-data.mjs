@@ -27,18 +27,20 @@ for (const e of ms) {
 }
 for (const list of byCode.values()) list.sort((a, b) => a.weight - b.weight || a.idx - b.idx)
 
-const charCodes = new Map() // char -> [[code, rank]]
-const wordCodes = new Map() // word -> [code]
+// [code, candidate rank (1-based), candidate count under that code]
+const charCodes = new Map() // char -> [[code, rank, n]]
+const wordCodes = new Map() // word -> [[code, rank, n]]
 for (const [code, list] of byCode) {
   list.forEach((e, i) => {
     const target = [...e.word].length === 1 ? charCodes : wordCodes
     if (!target.has(e.word)) target.set(e.word, [])
     const arr = target.get(e.word)
-    if (!arr.some((x) => (Array.isArray(x) ? x[0] : x) === code)) arr.push(target === charCodes ? [code, i + 1] : code)
+    if (!arr.some((x) => x[0] === code)) arr.push([code, i + 1, list.length])
   })
 }
-for (const arr of charCodes.values()) arr.sort((a, b) => a[0].length - b[0].length || (a[0] < b[0] ? -1 : 1))
-for (const arr of wordCodes.values()) arr.sort((a, b) => a.length - b.length || (a < b ? -1 : 1))
+const byLenThenCode = (a, b) => a[0].length - b[0].length || (a[0] < b[0] ? -1 : 1)
+for (const arr of charCodes.values()) arr.sort(byLenThenCode)
+for (const arr of wordCodes.values()) arr.sort(byLenThenCode)
 
 // ---- code index shards (by first 2 letters)
 const kShards = new Map()
