@@ -40,3 +40,7 @@ npm run dev
 ```
 
 推送到 `main` 后由 GitHub Actions 生成数据、构建并发布到 Cloudflare Pages（需要 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`、`CLOUDFLARE_PAGES_PROJECT` 三个 secret）。
+
+## 许可
+
+本项目源代码以 [GNU AGPL-3.0](LICENSE) 许可开源。`data-src/` 中的第三方数据各自遵循其原始许可（见上表）。
