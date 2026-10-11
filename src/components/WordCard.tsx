@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { CharRecord, DictCode } from '../lib/data'
 import { wordRule } from '../lib/explain'
-import { commitKey, MAX_PLAN_CHARS, planTyping, type PlanResult, type Segment, type TypingPlan } from '../lib/plan'
+import { commitKey, planTyping, type PlanResult, type Segment, type TypingPlan } from '../lib/plan'
 
 interface Props {
   word: string
@@ -68,65 +68,73 @@ function SegmentChip({ seg, onSearch }: { seg: Segment; onSearch: (q: string) =>
   )
 }
 
-function PlanInline({ plan }: { plan: TypingPlan }) {
+function PlanBlock({
+  title,
+  plan,
+  subtitle,
+  muted,
+  onSearch,
+}: {
+  title: string
+  plan: TypingPlan
+  subtitle: React.ReactNode
+  muted?: boolean
+  onSearch: (q: string) => void
+}) {
   return (
-    <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1">
-      {plan.segs.map((s, i) =>
-        s.missing ? (
-          <span key={i} className="opacity-60">〔{s.text}〕</span>
-        ) : (
-          <span key={i} className="inline-flex items-center font-mono tracking-wider" title={`${s.text} · ${commitLabel(s)}`}>
-            {s.code}
-            <CommitCap commit={s.commit} size="sm" />
-          </span>
-        ),
-      )}
-    </span>
+    <div className={muted ? 'mt-5 border-t border-black/5 pt-4 dark:border-white/10' : ''}>
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className={`font-kai ${muted ? 'text-lg' : 'text-xl'}`}>{title}</h3>
+        <span className="text-sm text-ink-2 dark:text-white/55">{subtitle}</span>
+      </div>
+      <div className="mt-3 flex flex-wrap items-stretch gap-2">
+        {plan.segs.map((s, i) => (
+          <SegmentChip key={i} seg={s} onSearch={onSearch} />
+        ))}
+      </div>
+    </div>
   )
 }
 
 function PlanPanel({ word, res, inDict, onSearch }: { word: string; res: PlanResult; inDict: boolean; onSearch: (q: string) => void }) {
-  const [best, ...alts] = res.plans
-  if (!best) return null
-  const wholeIsBest = inDict && best.segs.length === 1 && best.segs[0].text === word
-  const saved = res.perChar - best.keys
+  const { recommended: rec, optimized: opt } = res
+  if (!rec.segs.length) return null
+  const wholeIsBest = inDict && !opt && rec.segs.length === 1 && rec.segs[0].text === word
+  const saved = res.perChar - rec.keys
   return (
     <section className="mt-6 rounded-2xl border border-black/5 bg-black/[0.025] p-4 sm:p-5 dark:border-white/10 dark:bg-white/[0.03]">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <h3 className="font-kai text-xl">推荐打法</h3>
-        <span className="text-sm text-ink-2 dark:text-white/55">
-          共 <b className="font-mono text-ink dark:text-white">{best.keys}</b> 键
-          {saved > 0 && (
+      <PlanBlock
+        title="推荐打法"
+        plan={rec}
+        onSearch={onSearch}
+        subtitle={
+          <>
+            不用选重，共 <b className="font-mono text-ink dark:text-white">{rec.keys}</b> 键
+            {saved > 0 && (
+              <>
+                ，比逐字输入（{res.perChar} 键）省 <b className="text-emerald-600 dark:text-emerald-400">{saved}</b> 键
+              </>
+            )}
+            {wholeIsBest && '，整词编码就是最省键的打法'}
+          </>
+        }
+      />
+      {opt && (
+        <PlanBlock
+          title="优化打法"
+          plan={opt}
+          muted
+          onSearch={onSearch}
+          subtitle={
             <>
-              ，比逐字输入（{res.perChar} 键）省 <b className="text-emerald-600 dark:text-emerald-400">{saved}</b> 键
+              共 <b className="font-mono text-ink dark:text-white">{opt.keys}</b> 键，再省{' '}
+              <b className="text-emerald-600 dark:text-emerald-400">{rec.keys - opt.keys}</b> 键，但需要记住选重数字
             </>
-          )}
-        </span>
-        {wholeIsBest && <span className="text-xs text-ink-2/80 dark:text-white/45">整词编码就是最省键的打法</span>}
-      </div>
-
-      <div className="mt-3 flex flex-wrap items-stretch gap-2">
-        {best.segs.map((s, i) => (
-          <SegmentChip key={i} seg={s} onSearch={onSearch} />
-        ))}
-      </div>
-
-      {alts.length > 0 && (
-        <div className="mt-4 space-y-1 text-sm">
-          <div className="text-xs text-ink-2/80 dark:text-white/45">其他打法</div>
-          {alts.map((p, i) => (
-            <div key={i} className="flex flex-wrap items-baseline gap-x-3">
-              <PlanInline plan={p} />
-              <span className="text-xs text-ink-2/80 dark:text-white/45">
-                {p.segs.map((s) => s.text).join(' / ')} · {p.keys} 键
-              </span>
-            </div>
-          ))}
-        </div>
+          }
+        />
       )}
-      <p className="mt-3 text-[11px] leading-5 text-ink-2/70 dark:text-white/35">
-        计键规则：编码位数 + 上屏键；四码且只有一个候选时自动上屏，其余按空格（第 1 候选）或数字键选重；需要翻页的候选不计入。
-        {res.truncated && ` 仅计算前 ${MAX_PLAN_CHARS} 个字。`}
+      <p className="mt-4 text-[11px] leading-5 text-ink-2/70 dark:text-white/35">
+        计键规则：编码位数 + 上屏键；四码且只有一个候选时自动上屏，否则第 1 候选按空格，第 2–9 候选按数字键；需要翻页的候选不计入。
       </p>
     </section>
   )

@@ -10,6 +10,8 @@ export interface Segment {
   /** '' = auto commit (unique 4-letter code), ' ' = space, '2'..'9' = pick by digit */
   commit: string
   keys: number
+  /** search cost: keys plus penalties for forced picks / missing characters */
+  cost: number
   /** no usable code in the dictionary */
   missing?: boolean
 }
@@ -17,13 +19,16 @@ export interface Segment {
 export interface TypingPlan {
   segs: Segment[]
   keys: number
+  cost: number
   /** how many segments need a non-first candidate */
   picks: number
 }
 
 export const MAX_PLAN_CHARS = 40
 const MAX_WORD_LEN = 12
-const MISSING_COST = 100
+const MISSING_COST = 1000
+/** In no-pick mode a character that is never a first candidate may still be picked, but reluctantly. */
+const FORCED_PICK_PENALTY = 20
 
 /** Key that commits the candidate, or null when it would need paging (rank > 9). */
 export function commitKey(code: string, rank: number, n: number): string | null {
@@ -32,69 +37,79 @@ export function commitKey(code: string, rank: number, n: number): string | null 
   return rank === 1 ? ' ' : String(rank)
 }
 
-export function bestSegment(text: string, codes: DictCode[]): Segment | null {
+/** Cheapest way to type `text` with one code; `allowPick` permits candidates 2–9. */
+export function bestSegment(text: string, codes: DictCode[], allowPick: boolean): Segment | null {
   let best: Segment | null = null
   for (const [code, rank, n] of codes) {
+    if (!allowPick && rank > 1) continue
     const commit = commitKey(code, rank, n)
     if (commit === null) continue
     const keys = code.length + commit.length
     if (!best || keys < best.keys || (keys === best.keys && rank < best.rank)) {
-      best = { text, code, rank, n, commit, keys }
+      best = { text, code, rank, n, commit, keys, cost: keys }
     }
   }
   return best
 }
 
-const better = (a: TypingPlan, b: TypingPlan) =>
-  a.keys - b.keys || a.segs.length - b.segs.length || a.picks - b.picks
+const missingSeg = (text: string): Segment => ({ text, code: '', rank: 1, n: 0, commit: '', keys: 0, cost: MISSING_COST, missing: true })
 
-/**
- * K-best segmentation of `chars` into dictionary words/characters minimizing keystrokes.
- * Ties prefer fewer segments, then fewer non-first candidate picks.
- */
-export function solvePlans(n: number, options: (Segment | null)[][], k: number): TypingPlan[] {
-  const dp: TypingPlan[][] = Array.from({ length: n + 1 }, () => [])
-  dp[0] = [{ segs: [], keys: 0, picks: 0 }]
+const better = (a: TypingPlan, b: TypingPlan) =>
+  a.cost - b.cost || a.segs.length - b.segs.length || a.picks - b.picks
+
+/** Best segmentation into dictionary words/characters; ties prefer fewer segments, then fewer picks. */
+export function solvePlan(options: (Segment | null)[][]): TypingPlan {
+  const n = options.length
+  const dp: (TypingPlan | null)[] = Array.from({ length: n + 1 }, () => null)
+  dp[0] = { segs: [], keys: 0, cost: 0, picks: 0 }
   for (let j = 1; j <= n; j++) {
-    const cands: TypingPlan[] = []
     for (let i = Math.max(0, j - MAX_WORD_LEN); i < j; i++) {
       const seg = options[i][j - i - 1]
-      if (!seg) continue
-      for (const p of dp[i]) {
-        cands.push({ segs: [...p.segs, seg], keys: p.keys + seg.keys, picks: p.picks + (seg.rank > 1 ? 1 : 0) })
+      const prev = dp[i]
+      if (!seg || !prev) continue
+      const cand: TypingPlan = {
+        segs: [...prev.segs, seg],
+        keys: prev.keys + seg.keys,
+        cost: prev.cost + seg.cost,
+        picks: prev.picks + (seg.rank > 1 ? 1 : 0),
       }
+      if (!dp[j] || better(cand, dp[j]!) < 0) dp[j] = cand
     }
-    dp[j] = cands.sort(better).slice(0, k)
   }
-  return dp[n]
+  return dp[n]!
 }
 
 export interface PlanResult {
-  plans: TypingPlan[]
-  /** keystrokes when typing character by character */
+  /** first candidates only (space / auto commit) */
+  recommended: TypingPlan
+  /** fewest keys allowing digit picks; null when it is not better than `recommended` */
+  optimized: TypingPlan | null
+  /** keystrokes when typing character by character with first candidates */
   perChar: number
-  truncated: boolean
 }
 
-export async function planTyping(chars: string[], k = 3): Promise<PlanResult> {
+export async function planTyping(chars: string[]): Promise<PlanResult> {
   const n = Math.min(chars.length, MAX_PLAN_CHARS)
-  // options[i][len-1]: best way to type chars[i, i+len)
-  const options: (Segment | null)[][] = await Promise.all(
+  const rows = await Promise.all(
     Array.from({ length: n }, async (_, i) => {
-      const ch = chars[i]
       const words: string[] = []
       for (let len = 2; len <= MAX_WORD_LEN && i + len <= n; len++) words.push(chars.slice(i, i + len).join(''))
-      const [rec, ...wordCodes] = await Promise.all([getChar(ch), ...words.map((w) => getWordCodes(w))])
-      return [
-        bestSegment(ch, rec?.codes ?? []) ?? { text: ch, code: '', rank: 1, n: 0, commit: '', keys: MISSING_COST, missing: true },
-        ...words.map((w, k) => bestSegment(w, wordCodes[k])),
-      ]
+      const [rec, ...wordCodes] = await Promise.all([getChar(chars[i]), ...words.map((w) => getWordCodes(w))])
+      return { ch: chars[i], charCodes: rec?.codes ?? [], words, wordCodes }
     }),
   )
-  const plans = solvePlans(n, options, k).map((p) => ({
-    ...p,
-    keys: p.keys - p.segs.filter((s) => s.missing).length * MISSING_COST,
-  }))
-  const perChar = options.reduce((s, row) => s + (row[0]?.missing ? 0 : row[0]!.keys), 0)
-  return { plans, perChar, truncated: chars.length > n }
+  const build = (allowPick: boolean) =>
+    rows.map(({ ch, charCodes, words, wordCodes }) => {
+      let single = bestSegment(ch, charCodes, allowPick)
+      if (!single && !allowPick) {
+        const forced = bestSegment(ch, charCodes, true)
+        single = forced && { ...forced, cost: forced.keys + FORCED_PICK_PENALTY }
+      }
+      return [single ?? missingSeg(ch), ...words.map((w, k) => bestSegment(w, wordCodes[k], allowPick))]
+    })
+  const noPick = build(false)
+  const recommended = solvePlan(noPick)
+  const optimized = solvePlan(build(true))
+  const perChar = noPick.reduce((s, row) => s + row[0]!.keys, 0)
+  return { recommended, optimized: optimized.keys < recommended.keys ? optimized : null, perChar }
 }
