@@ -81,17 +81,14 @@ export async function planTyping(chars: string[], k = 3): Promise<PlanResult> {
   // options[i][len-1]: best way to type chars[i, i+len)
   const options: (Segment | null)[][] = await Promise.all(
     Array.from({ length: n }, async (_, i) => {
-      const row: (Segment | null)[] = []
       const ch = chars[i]
-      const rec = await getChar(ch)
-      row.push(
+      const words: string[] = []
+      for (let len = 2; len <= MAX_WORD_LEN && i + len <= n; len++) words.push(chars.slice(i, i + len).join(''))
+      const [rec, ...wordCodes] = await Promise.all([getChar(ch), ...words.map((w) => getWordCodes(w))])
+      return [
         bestSegment(ch, rec?.codes ?? []) ?? { text: ch, code: '', rank: 1, n: 0, commit: '', keys: MISSING_COST, missing: true },
-      )
-      for (let len = 2; len <= MAX_WORD_LEN && i + len <= n; len++) {
-        const w = chars.slice(i, i + len).join('')
-        row.push(bestSegment(w, await getWordCodes(w)))
-      }
-      return row
+        ...words.map((w, k) => bestSegment(w, wordCodes[k])),
+      ]
     }),
   )
   const plans = solvePlans(n, options, k).map((p) => ({
