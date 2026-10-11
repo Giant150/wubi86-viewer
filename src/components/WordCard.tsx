@@ -96,10 +96,9 @@ function PlanBlock({
   )
 }
 
-function PlanPanel({ word, res, inDict, onSearch }: { word: string; res: PlanResult; inDict: boolean; onSearch: (q: string) => void }) {
+function PlanPanel({ res, onSearch }: { res: PlanResult; onSearch: (q: string) => void }) {
   const { recommended: rec, optimized: opt } = res
   if (!rec.segs.length) return null
-  const wholeIsBest = inDict && !opt && rec.segs.length === 1 && rec.segs[0].text === word
   const saved = res.perChar - rec.keys
   return (
     <section className="mt-6 rounded-2xl border border-black/5 bg-black/[0.025] p-4 sm:p-5 dark:border-white/10 dark:bg-white/[0.03]">
@@ -115,7 +114,6 @@ function PlanPanel({ word, res, inDict, onSearch }: { word: string; res: PlanRes
                 ，比逐字输入（{res.perChar} 键）省 <b className="text-emerald-600 dark:text-emerald-400">{saved}</b> 键
               </>
             )}
-            {wholeIsBest && '，整词编码就是最省键的打法'}
           </>
         }
       />
@@ -147,16 +145,17 @@ export function WordCard({ word, codes, recs, onSearch }: Props) {
   const derived = picks.map(([ci, idx]) => idx.map((i) => fulls[ci]?.[i] ?? '?').join('')).join('')
   const takeMap = new Map(picks.map(([ci, idx]) => [ci, idx]))
   const [plan, setPlan] = useState<{ word: string; res: PlanResult } | null>(null)
+  const inDict = codes.length > 0
 
   useEffect(() => {
+    if (inDict) return
     let alive = true
     planTyping([...word]).then((res) => alive && setPlan({ word, res }))
     return () => {
       alive = false
     }
-  }, [word])
+  }, [word, inDict])
 
-  const inDict = codes.length > 0
 
   return (
     <article className="card pop-in p-5 sm:p-7">
@@ -192,7 +191,7 @@ export function WordCard({ word, codes, recs, onSearch }: Props) {
         )}
       </div>
 
-      {plan?.word === word && <PlanPanel word={word} res={plan.res} inDict={inDict} onSearch={onSearch} />}
+      {!inDict && plan?.word === word && <PlanPanel res={plan.res} onSearch={onSearch} />}
 
       <p className="mt-6 text-[15px] leading-7">
         {inDict ? rule : `造词规则（仅供参考）：${rule}`}
