@@ -4,7 +4,8 @@ import { mkdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import opentype from 'opentype.js'
 import { loadWubi, loadChars, loadHanziWriter, loadMs, SRC } from './lib/load.mjs'
-import { buildRootModel, rootUnitsOf, segmentChar } from './lib/roots.mjs'
+import { buildRootModel, learnVariants, rootUnitsOf, segmentChar } from './lib/roots.mjs'
+import { buildStrokeClassifier } from './lib/strokes.mjs'
 
 const OUT = 'public/data'
 rmSync(OUT, { recursive: true, force: true })
@@ -17,6 +18,23 @@ const wubi = loadWubi()
 const chars = loadChars()
 const model = buildRootModel(wubi, chars)
 console.log('roots learned', model.seqs.size)
+const classifyStroke = buildStrokeClassifier(chars, loadHanziWriter)
+// stroke types inferred from the vectors when data-chars disagrees with hanzi-writer's stroke count
+const inferredSeqs = new Map()
+for (const [ch, c] of chars) {
+  const hw = loadHanziWriter(ch)
+  if (hw && c.strokeSeq.length !== hw.strokes.length) inferredSeqs.set(ch, hw.medians.map(classifyStroke).join(''))
+}
+const variantItems = []
+for (const w of wubi.values()) {
+  const c = chars.get(w.char)
+  if (w.keyUnit || w.charUnit || w.strokeUnit || !c || !loadHanziWriter(w.char)) continue
+  const ru = rootUnitsOf(w, model.idUnits)
+  // variants come from traditional shapes (inferred stroke types) or roots never seen in hand-made segments
+  if (inferredSeqs.has(w.char) || ru.some((u) => !model.seqs.has(u)))
+    variantItems.push({ ru, ss: inferredSeqs.get(w.char) ?? c.strokeSeq })
+}
+console.log('root variants learned', learnVariants(model, variantItems))
 
 // ---- Microsoft dictionary: candidate order = weight ascending (stable by file order)
 const ms = loadMs()
@@ -99,7 +117,7 @@ write('roots.json', roots)
 
 // ---- char details (by codepoint >> 4)
 const cShards = new Map()
-const stats = { chars: 0, decomposed: 0, strokes: 0, seg: { source: 0, exact: 0, approx: 0 } }
+const stats = { chars: 0, decomposed: 0, strokes: 0, seg: { source: 0, exact: 0, approx: 0, inferred: 0 } }
 const allChars = new Set([...charCodes.keys()].filter(isHan))
 for (const ch of wubi.keys()) if (charCodes.has(ch)) allChars.add(ch)
 for (const ch of allChars) {
@@ -127,11 +145,13 @@ for (const ch of allChars) {
     stats.strokes++
     rec.s = hw.strokes
     if (w && rec.t === 0) {
-      const r = segmentChar(w, c, model, hw.strokes.length)
+      const inferred = inferredSeqs.get(ch)
+      const r = segmentChar(w, c, model, hw.strokes.length, inferred)
       if (r) {
         rec.seg = r.seg
         rec.q = r.quality
         stats.seg[r.quality]++
+        if (inferred) stats.seg.inferred++
       }
     }
   }

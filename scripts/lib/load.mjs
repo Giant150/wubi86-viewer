@@ -21,6 +21,7 @@ export function loadWubi() {
       units,
       flag: f[8],
       segments: /\d/.test(f[9] ?? '') ? parseSegments(f[9]) : null,
+      interleaved: (f[9] ?? '').startsWith('*'),
     })
   }
   return map

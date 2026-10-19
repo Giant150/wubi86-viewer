@@ -1,5 +1,5 @@
 // Learns stroke-type sequences of every wubi root (PUA glyph) from the known segment data.
-import { solveSegments, solveSegmentsLoose } from './segment.mjs'
+import { solveSegments, solveSegmentsAnyOrder, solveSegmentsLoose } from './segment.mjs'
 import { approxSegments } from './approx.mjs'
 
 const isSplit = (idx) => idx.some((x, i) => i > 0 && x !== idx[i - 1] + 1)
@@ -30,7 +30,8 @@ export function buildRootModel(wubi, chars) {
     const ru = rootUnitsOf(w, idUnits)
     if (w.segments.length !== ru.length) continue
     if (w.segments.some((s) => !s.length || s.some((x) => x == null || x >= c.strokeSeq.length))) continue
-    w.segments.forEach((idx, i) => add(ru[i], idx.map((k) => c.strokeSeq[k]).join(''), isSplit(idx)))
+    // interleaved roots (兆) are split by necessity; keep them out of the split-rate prior
+    w.segments.forEach((idx, i) => add(ru[i], idx.map((k) => c.strokeSeq[k]).join(''), w.interleaved ? undefined : isSplit(idx)))
   }
   const seqs = new Map()
   for (const [u, m] of learned) {
@@ -39,7 +40,7 @@ export function buildRootModel(wubi, chars) {
     seqs.set(u, e.filter(([, n], i) => i === 0 || n >= Math.max(2, top * 0.15)).map((x) => x[0]))
   }
   const splitRate = new Map([...split].map(([u, [a, b]]) => [u, (a + 0.1) / (b + 1)]))
-  return { idUnits, seqs, splitRate }
+  return { idUnits, seqs, splitRate, variants: new Map() }
 }
 
 export function rootUnitsOf(w, idUnits) {
@@ -48,20 +49,73 @@ export function rootUnitsOf(w, idUnits) {
   return u
 }
 
+// Learns extra stroke sequences of roots (e.g. traditional 4-stroke 艹 "2121", 糹 "554444") from characters the
+// model cannot segment exactly: when every other root matches exactly and the remaining root's chunk is unambiguous.
+// items: [{ ru: root units, ss: stroke-type string }]. Learned variants are tracked in model.variants so results
+// relying on them can be flagged as approximate.
+export function learnVariants(model, items, minCount = 3) {
+  const found = new Map()
+  for (const { ru, ss } of items) {
+    const seqs = ru.map((u) => model.seqs.get(u) ?? [])
+    const gap = ru.length === 4
+    if (seqs.filter((q) => !q.length).length > 1) continue
+    if (seqs.every((q) => q.length)) {
+      if (solveSegments(seqs, ss, gap, 1).length) continue
+      if ((solveSegmentsAnyOrder(seqs, ss, gap)?.cost ?? Infinity) <= 3) continue
+    }
+    const subs = new Set()
+    for (let a = 0; a < ss.length; a++) for (let L = 1; L <= 10 && a + L <= ss.length; L++) subs.add(ss.slice(a, a + L))
+    for (let r = 0; r < ru.length; r++) {
+      if (seqs.some((q, i) => i !== r && !q.length)) continue
+      const trial = seqs.slice()
+      trial[r] = [...subs]
+      const sols = solveSegments(trial, ss, gap, 64)
+      if (!sols.length || sols.length >= 64) continue
+      const cand = new Set(sols.map((s) => (isSplit(s.seg[r]) ? '' : s.seg[r].map((i) => ss[i]).join(''))))
+      if (cand.size !== 1) continue
+      const v = [...cand][0]
+      if (!v || seqs[r].includes(v) || (seqs[r].length && Math.abs(v.length - seqs[r][0].length) > 2)) continue
+      if (!found.has(ru[r])) found.set(ru[r], new Map())
+      const m = found.get(ru[r])
+      m.set(v, (m.get(v) ?? 0) + 1)
+    }
+  }
+  let added = 0
+  for (const [u, m] of found)
+    for (const [v, n] of m)
+      if (n >= minCount) {
+        model.seqs.set(u, [...(model.seqs.get(u) ?? []), v])
+        if (!model.variants.has(u)) model.variants.set(u, new Set())
+        model.variants.get(u).add(v)
+        added++
+      }
+  return added
+}
+
 // returns { seg, quality: 'source' | 'exact' | 'approx' } or null
-export function segmentChar(w, c, model, nStrokes) {
-  if (!c || c.strokeSeq.length !== nStrokes) return null
+// inferredSeq: stroke types inferred from the stroke vectors, used when data-chars' count disagrees with them
+export function segmentChar(w, c, model, nStrokes, inferredSeq) {
+  if (!c) return null
+  const matches = c.strokeSeq.length === nStrokes
+  if (!matches && inferredSeq?.length !== nStrokes) return null
+  const ss = matches ? c.strokeSeq : inferredSeq
   const ru = rootUnitsOf(w, model.idUnits)
   const seqs = ru.map((u) => model.seqs.get(u) ?? [])
-  const s = w.segments
+  // hand-made segment indices refer to data-chars' stroke order
+  const s = matches ? w.segments : null
+  const structSource =
+    s && s.length === ru.length && s.every((x) => x.length && x.every((i) => Number.isInteger(i) && i < nStrokes))
   const validSource =
-    s && s.length === ru.length &&
-    s.every((x, r) => x.length && x.every((i) => i != null && i < nStrokes) &&
-      (!seqs[r].length || seqs[r].includes(x.map((i) => c.strokeSeq[i]).join(''))))
+    structSource && s.every((x, r) => !seqs[r].length || seqs[r].includes(x.map((i) => ss[i]).join('')))
   if (validSource) return { seg: s, quality: 'source' }
   const gap = ru.length === 4
+  // exact matches that rely on a learned root variant are only as good as the variant
+  const exact = (seg) => ({
+    seg,
+    quality: seg.some((idx, r) => model.variants.get(ru[r])?.has(idx.map((i) => ss[i]).join(''))) ? 'approx' : 'exact',
+  })
   if (seqs.every((q) => q.length)) {
-    const sols = solveSegments(seqs, c.strokeSeq, gap)
+    const sols = solveSegments(seqs, ss, gap)
     if (sols.length) {
       const score = (sol) =>
         sol.gaps * 0.5 +
@@ -70,12 +124,18 @@ export function segmentChar(w, c, model, nStrokes) {
           return acc + (isSplit(idx) ? 1 - rate : rate)
         }, 0)
       sols.sort((a, b) => score(a) - score(b))
-      return { seg: sols[0].seg, quality: 'exact' }
+      return exact(sols[0].seg)
     }
-    const loose = solveSegmentsLoose(seqs, c.strokeSeq, gap)
+  }
+  // Hand-made segments whose root shapes are deformed (e.g. 止 in 延) beat any fuzzy guess.
+  if (structSource) return { seg: s, quality: 'approx' }
+  if (seqs.every((q) => q.length)) {
+    const any = solveSegmentsAnyOrder(seqs, ss, gap)
+    if (any && any.cost <= 3) return exact(any.seg)
+    const loose = solveSegmentsLoose(seqs, ss, gap)
     if (loose) return { seg: loose, quality: 'approx' }
   }
-  const ap = approxSegments(seqs, c.strokeSeq, gap)
+  const ap = approxSegments(seqs, ss, gap)
   if (ap && ap.cost <= Math.max(1, Math.floor(nStrokes / 4))) return { seg: ap.seg, quality: 'approx' }
   return null
 }
